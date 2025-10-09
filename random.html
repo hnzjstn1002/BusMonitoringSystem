@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Bus Monitoring System </title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<style>
+/* ============ GLOBAL ============ */
+*{box-sizing:border-box;margin:0;padding:0}
+body{
+  font-family:'Poppins',sans-serif;
+  background:linear-gradient(120deg,#001f4d,#004aad,#001f4d);
+  background-size:400% 400%;
+  animation:gradient 10s ease infinite;
+  color:#fff;height:100vh;overflow:hidden;
+}
+@keyframes gradient{0%{background-position:0% 50%}50%{background-position:100% 50%}100%{background-position:0% 50%}}
+header{
+  text-align:center;
+  padding:12px;
+  background:rgba(255,255,255,0.1);
+  backdrop-filter:blur(8px);
+  color:#ffde59;
+  font-weight:600;
+  letter-spacing:1px;
+}
+.screen{display:none;padding:10px;text-align:center;}
+.active{display:block;}
+input,button{padding:10px;border:none;border-radius:8px;margin:6px;width:80%;}
+button{background:linear-gradient(45deg,#ffde59,#ffc600);color:#000;font-weight:600;}
+button:hover{transform:scale(1.05)}
+.card{
+  background:rgba(255,255,255,0.15);
+  padding:10px;margin:8px auto;
+  border-radius:12px;
+  backdrop-filter:blur(8px);
+  width:95%;
+  max-width:450px;
+}
+#map,#mapDriver,#mapAdmin{height:60vh;width:100%;border-radius:12px;margin-top:8px;}
+@media(max-width:768px){
+  input,button{width:95%;}
+  #map,#mapDriver,#mapAdmin{height:65vh;}
+}
+/* bottom nav for driver/commuter */
+.navbar{
+  position:fixed;bottom:0;left:0;width:100%;
+  background:rgba(255,255,255,0.1);
+  backdrop-filter:blur(10px);
+  display:flex;justify-content:space-around;
+  padding:10px 0;
+}
+.navbar button{width:auto;padding:8px 12px;margin:0;font-size:0.9rem;}
+</style>
+</head>
+<body>
+<header>BUS MONITORING SYSTEM </header>
+
+<!-- WELCOME -->
+<div id="welcome" class="screen active">
+  <h2>Welcome!</h2><p>Select role to continue</p>
+  <button onclick="showScreen('commuterLogin')">Login as Commuter</button>
+  <button onclick="showScreen('driverLogin')">Login as Driver</button>
+  <button onclick="showScreen('adminLogin')">Login as Admin</button>
+</div>
+
+<!-- COMMUTER LOGIN -->
+<div id="commuterLogin" class="screen">
+  <h3>Commuter Login / Sign Up</h3>
+  <input id="commuterName" placeholder="Full Name"><br>
+  <input id="commuterEmail" placeholder="Email"><br>
+  <button onclick="commuterLogin()">Continue</button>
+  <button onclick="showScreen('welcome')">⬅ Back</button>
+</div>
+
+<!-- COMMUTER DASH -->
+<div id="commuterDash" class="screen">
+  <h3>Commuter Dashboard</h3>
+  <div class="card">Status: <span id="commuterStatus"></span></div>
+  <div id="map"></div>
+  <div class="navbar">
+    <button onclick="refreshCommuterMap()">🔄 Refresh Map</button>
+    <button onclick="logout()">🚪 Logout</button>
+  </div>
+</div>
+
+<!-- DRIVER LOGIN -->
+<div id="driverLogin" class="screen">
+  <h3>Driver Login</h3>
+  <input id="driverName" placeholder="Driver Name"><br>
+  <input id="busName" placeholder="Bus Name"><br>
+  <button onclick="driverLogin()">Continue</button>
+  <button onclick="showScreen('welcome')">⬅ Back</button>
+</div>
+
+<!-- DRIVER DASH -->
+<div id="driverDash" class="screen">
+  <h3>Driver Dashboard</h3>
+  <div class="card">
+    <p>Bus: <span id="driverBusName"></span></p>
+    <p>Capacity: <span id="capacityValue">30</span> seats</p>
+    <input type="range" min="0" max="30" value="30" id="capacitySlider" oninput="updateCapacity(this.value)">
+  </div>
+  <div id="mapDriver"></div>
+  <div class="navbar">
+    <button onclick="updateDriverLocation()">📡 Latest Location</button>
+    <button onclick="enablePinMode()">📍 Pin Location</button>
+    <button onclick="logout()">🚪 Logout</button>
+  </div>
+</div>
+
+<!-- ADMIN LOGIN -->
+<div id="adminLogin" class="screen">
+  <h3>Admin Login</h3>
+  <input id="adminUser" placeholder="Username"><br>
+  <input id="adminPass" type="password" placeholder="Password"><br>
+  <button onclick="adminLogin()">Login</button>
+  <button onclick="showScreen('welcome')">⬅ Back</button>
+</div>
+
+<!-- ADMIN DASH -->
+<div id="adminDash" class="screen">
+  <h3>Admin Panel</h3>
+  <div class="card" id="stats"></div>
+  <div class="card">
+    <h4>Commuter Approvals</h4>
+    <div id="commuterList"></div>
+  </div>
+  <div class="card">
+    <h4>Buses</h4>
+    <div id="busList"></div>
+  </div>
+  <div id="mapAdmin"></div>
+  <div class="navbar">
+    <button onclick="refreshAdmin()">🔄 Refresh</button>
+    <button onclick="logout()">🚪 Logout</button>
+  </div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+let commuters = JSON.parse(localStorage.getItem('commuters')||'[]');
+let buses = JSON.parse(localStorage.getItem('buses')||'[]');
+let currentUser=null, driverMarker=null, driverMap=null;
+let pinMode=false;
+
+/* ============ UTILITIES ============ */
+function saveData(){
+  localStorage.setItem('commuters',JSON.stringify(commuters));
+  localStorage.setItem('buses',JSON.stringify(buses));
+}
+function showScreen(id){
+  document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));
+  document.getElementById(id).classList.add('active');
+}
+
+/* ============ COMMUTER ============ */
+function commuterLogin(){
+  const n=document.getElementById('commuterName').value.trim();
+  const e=document.getElementById('commuterEmail').value.trim();
+  if(!n||!e)return alert('Please fill all fields');
+  let c=commuters.find(x=>x.email===e);
+  if(!c){c={name:n,email:e,status:'pending'};commuters.push(c);saveData();alert('Registered! Wait for admin approval.');}
+  currentUser=c;showCommuterDash();
+}
+function showCommuterDash(){
+  showScreen('commuterDash');
+  document.getElementById('commuterStatus').textContent=currentUser.status;
+  if(currentUser.status!=='approved'){
+    document.getElementById('map').innerHTML="<p>Please wait for admin approval.</p>";
+  }else initCommuterMap();
+}
+function initCommuterMap(){
+  const map=L.map('map').setView([10.948,122.503],15);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
+  buses.forEach(b=>{
+    const col=b.status==='Green'?'green':b.status==='Yellow'?'yellow':'red';
+    L.circleMarker([b.lat,b.lng],{color:col,radius:10}).addTo(map)
+      .bindPopup(`<b>${b.name}</b><br>${b.driver}<br>Status:${b.status}`);
+    if(b.pins) b.pins.forEach(p=>L.marker(p,{title:'Pinned'}).addTo(map));
+  });
+}
+function refreshCommuterMap(){initCommuterMap();}
+
+/* ============ DRIVER ============ */
+function driverLogin(){
+  const d=document.getElementById('driverName').value.trim();
+  const b=document.getElementById('busName').value.trim();
+  if(!d||!b)return alert('Fill all fields');
+  let bus=buses.find(x=>x.name===b);
+  if(!bus){bus={id:Date.now(),name:b,driver:d,lat:10.948,lng:122.503,capacity:30,status:'Green',pins:[]};buses.push(bus);saveData();}
+  currentUser=bus;showScreen('driverDash');
+  document.getElementById('driverBusName').textContent=bus.name;
+  initDriverMap(bus);
+}
+function initDriverMap(bus){
+  driverMap=L.map('mapDriver').setView([bus.lat,bus.lng],15);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(driverMap);
+  driverMarker=L.marker([bus.lat,bus.lng]).addTo(driverMap).bindPopup(bus.name);
+  driverMap.on('click',e=>{
+    if(pinMode){bus.pins.push([e.latlng.lat,e.latlng.lng]);saveData();L.marker(e.latlng).addTo(driverMap);pinMode=false;alert('Pinned!');}
+  });
+}
+function updateDriverLocation(){
+  if(!navigator.geolocation)return alert('Geolocation not supported');
+  navigator.geolocation.getCurrentPosition(pos=>{
+    const{latitude,longitude}=pos.coords;
+    currentUser.lat=latitude;currentUser.lng=longitude;
+    driverMarker.setLatLng([latitude,longitude]);
+    driverMap.setView([latitude,longitude]);
+    saveData();
+    alert('Location Updated!');
+  });
+}
+function enablePinMode(){pinMode=true;alert('Tap on map to pin a location.');}
+function updateCapacity(val){
+  document.getElementById('capacityValue').textContent=val;
+  currentUser.capacity=val;
+  currentUser.status=val>20?'Green':val>5?'Yellow':'Red';
+  saveData();
+}
+
+/* ============ ADMIN ============ */
+function adminLogin(){
+  const u=document.getElementById('adminUser').value;
+  const p=document.getElementById('adminPass').value;
+  if(u==='admin'&&p==='admin'){showScreen('adminDash');loadAdmin();initAdminMap();}
+  else alert('Invalid credentials');
+}
+function loadAdmin(){
+  let pend=commuters.filter(c=>c.status==='pending').length;
+  let app=commuters.filter(c=>c.status==='approved').length;
+  document.getElementById('stats').innerHTML=
+    `👥 Total: ${commuters.length} | ✅ Approved: ${app} | ⏳ Pending: ${pend}<br>🚌 Buses: ${buses.length}`;
+  const cl=document.getElementById('commuterList');cl.innerHTML='';
+  commuters.forEach(c=>{
+    cl.innerHTML+=`${c.name} (${c.status}) <button onclick="approve('${c.email}')">Approve</button><br>`;
+  });
+  const bl=document.getElementById('busList');bl.innerHTML='';
+  buses.forEach(b=>bl.innerHTML+=`🚍 ${b.name} - ${b.status}<br>`);
+}
+function approve(email){
+  commuters=commuters.map(c=>c.email===email?{...c,status:'approved'}:c);
+  saveData();loadAdmin();alert('Approved!');
+}
+function initAdminMap(){
+  const map=L.map('mapAdmin').setView([10.948,122.503],15);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
+  setInterval(()=>{
+    map.eachLayer(l=>{if(l instanceof L.CircleMarker||l instanceof L.Marker)map.removeLayer(l);});
+    buses.forEach(b=>{
+      const col=b.status==='Green'?'green':b.status==='Yellow'?'yellow':'red';
+      L.circleMarker([b.lat,b.lng],{color:col,radius:10}).addTo(map)
+        .bindPopup(`<b>${b.name}</b><br>${b.driver}<br>${b.status}`);
+      if(b.pins) b.pins.forEach(p=>L.marker(p,{title:'Pin'}).addTo(map));
+    });
+  },4000);
+}
+function refreshAdmin(){loadAdmin();}
+
+/* ============ LOGOUT ============ */
+function logout(){currentUser=null;showScreen('welcome');}
+</script>
+</body>
+</html>
